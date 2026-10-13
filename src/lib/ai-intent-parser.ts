@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ParseResult } from "./domain";
 import { conditionSchema } from "./domain";
+import { defaultExclusions } from "./exclusions";
 
 const aiOutputSchema = z.object({
   name: z.string().min(1).max(50),
@@ -18,7 +19,7 @@ const SYSTEM_PROMPT = `你是自然语言选股条件解析器。只输出 JSON�
 确定性收益、涨停预测、直接买卖建议必须写入 complianceMessage，并仅给出可验证历史条件替代。
 输出结构：{name,logic,conditions:[{metric,operator,value,enabled}],clarifications:[{term,message,resolvedAs}],unsupportedTerms,complianceMessage?}。`;
 
-export async function parseIntentWithAI(query: string): Promise<ParseResult> {
+export async function parseIntentWithAI(query: string, dataMode: "demo" | "live" = "demo"): Promise<ParseResult> {
   const apiKey = process.env.AI_API_KEY;
   if (!apiKey) throw new Error("AI_API_KEY 未配置");
   const baseUrl = (process.env.AI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
@@ -48,7 +49,7 @@ export async function parseIntentWithAI(query: string): Promise<ParseResult> {
       strategy: {
         id: crypto.randomUUID(), name: parsed.name, originalQuery: query, logic: parsed.logic,
         conditions: parsed.conditions.map((condition) => ({ ...condition, id: condition.id ?? crypto.randomUUID() })),
-        exclusions: ["ST", "SUSPENDED", "MISSING_DATA"],
+        exclusions: defaultExclusions(dataMode),
       },
       clarifications: parsed.clarifications,
       unsupportedTerms: parsed.unsupportedTerms,

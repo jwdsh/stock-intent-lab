@@ -50,7 +50,8 @@ export function screenStocks(strategy: Strategy, stocks: StockRecord[], now = ne
     const status: StockEvaluation["status"] = exclusionReasons.length > 0 || definitivelyFailed
       ? "excluded" : unknownFlags || !matched ? "unavailable" : "included";
     if (definitivelyFailed) exclusionReasons.push(`未满足当前 ${strategy.logic} 条件组合`);
-    if (unknownFlags) exclusionReasons.push("排除条件所需的 ST 或停牌状态缺失，无法判断");
+    if (strategy.exclusions.includes("ST") && stock.isST === null) exclusionReasons.push("已启用排除 ST，但 ST 状态缺失，无法判断该排除条件");
+    if (strategy.exclusions.includes("SUSPENDED") && stock.isSuspended === null) exclusionReasons.push("已启用排除停牌，但停牌状态缺失，无法判断该排除条件");
     if (unavailable) exclusionReasons.push(matched ? "部分指标缺失；OR 已有满足分支" : "部分指标缺失，具体见逐条件依据");
     return { stock, status, evaluations: conditionResults, exclusionReasons };
   });

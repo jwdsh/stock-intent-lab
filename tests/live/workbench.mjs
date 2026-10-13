@@ -19,6 +19,26 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
   await page.goto(url);
   await expect(page.getByRole("region", { name: "股票池范围" })).toContainText("20 只");
+  await page.getByLabel("排除停牌", { exact: true }).check();
+  await expect(page.getByRole("status")).toContainText("即使全部数值条件满足");
+  await page.getByLabel("排除停牌", { exact: true }).uncheck();
+  await page.getByLabel("描述你的选股意图").fill("净利润低于 20%，PE 低于 30 倍，波动率低于 30%");
+  const parsedResponse = page.waitForResponse((r) => r.url().endsWith("/api/parse"));
+  await page.getByRole("button", { name: /解析意图/ }).click();
+  const parsed = await (await parsedResponse).json();
+  expect(parsed.strategy.exclusions).not.toContain("SUSPENDED");
+  const regressionResponse = page.waitForResponse((r) => r.url().endsWith("/api/screen"), { timeout: 120000 });
+  await page.getByRole("button", { name: /执行筛选/ }).click();
+  const regression = await (await regressionResponse).json();
+  expect(regression.included.length).toBeGreaterThan(0);
+  expect(regression.included.every((v) => v.evaluations.every((e) => e.status === "passed"))).toBe(true);
+  await page.getByLabel("排除停牌", { exact: true }).check();
+  const blockedResponse = page.waitForResponse((r) => r.url().endsWith("/api/screen"));
+  await page.getByRole("button", { name: /执行筛选/ }).click();
+  const blocked = await (await blockedResponse).json();
+  expect(blocked.included).toHaveLength(0);
+  expect(blocked.unavailable.length).toBeGreaterThanOrEqual(regression.included.length);
+  await page.getByLabel("排除停牌", { exact: true }).uncheck();
   await page.getByRole("button", { name: "停用条件" }).first().click();
   await page.getByRole("button", { name: "停用条件" }).last().click();
   const initialResponse = page.waitForResponse((r) => r.url().endsWith("/api/screen"), { timeout: 120000 });
@@ -47,7 +67,7 @@ try {
   await page.setViewportSize({ width: 393, height: 851 });
   await expect(dialog.getByRole("button", { name: "关闭股票比较" })).toBeVisible();
   await page.screenshot({ path: "test-results/live-compare-mobile.png", fullPage: true });
-  console.log(JSON.stringify({ total: next.total, before: first.included.length, after: next.included.length, excluded: next.excluded.length, sameSnapshot: true, comparisonMetrics: 8 }));
+  console.log(JSON.stringify({ total: next.total, allConditionsPassedIncluded: regression.included.length, explicitSuspensionUnavailable: blocked.unavailable.length, before: first.included.length, after: next.included.length, excluded: next.excluded.length, sameSnapshot: true, comparisonMetrics: 8 }));
 } finally {
   await browser?.close();
   server.kill();

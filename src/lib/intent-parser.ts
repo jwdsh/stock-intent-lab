@@ -1,4 +1,5 @@
 import type { Clarification, Condition, MetricKey, ParseResult, Strategy } from "./domain";
+import { defaultExclusions } from "./exclusions";
 
 const forbiddenPatterns = [
   /一定(涨|赚钱|盈利)/, /保证(收益|赚钱|盈利)/, /稳赚/, /必涨/, /涨停/, /直接.*(买|卖)/,
@@ -23,7 +24,7 @@ function explicitOperator(query: string, metricPattern: RegExp, fallback: Condit
   return fallback;
 }
 
-export function parseIntent(query: string): ParseResult {
+export function parseIntent(query: string, dataMode: "demo" | "live" = "demo"): ParseResult {
   const normalized = query.trim();
   const compliance = forbiddenPatterns.some((pattern) => pattern.test(normalized));
   const conditions: Condition[] = [];
@@ -66,7 +67,7 @@ export function parseIntent(query: string): ParseResult {
     originalQuery: normalized,
     logic: "AND",
     conditions,
-    exclusions: ["ST", "SUSPENDED", "MISSING_DATA"],
+    exclusions: defaultExclusions(dataMode),
   };
 
   return {

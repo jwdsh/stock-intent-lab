@@ -9,6 +9,7 @@ import {
 import type { Condition, MetricKey, ParseResult, ScreeningResult, StockEvaluation, Strategy } from "@/lib/domain";
 import { METRIC_LIST, METRICS, formatMetricValue } from "@/lib/metrics";
 import { detectConflicts, diffResults, strategyChanges } from "@/lib/screening";
+import { defaultExclusions } from "@/lib/exclusions";
 
 const DEFAULT_QUERY = "找经营改善、估值合理、走势相对稳定的股票";
 const EXAMPLES = [
@@ -47,7 +48,7 @@ function StatusIcon({ status }: { status: "passed" | "failed" | "unavailable" })
 
 export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "live"; universe?: string[] }) {
   const [query, setQuery] = useState(DEFAULT_QUERY);
-  const [strategy, setStrategy] = useState<Strategy>({ ...FALLBACK_STRATEGY, exclusions: dataMode === "live" ? ["ST", "MISSING_DATA"] : FALLBACK_STRATEGY.exclusions });
+  const [strategy, setStrategy] = useState<Strategy>({ ...FALLBACK_STRATEGY, exclusions: defaultExclusions(dataMode) });
   const [clarifications, setClarifications] = useState<ParseResult["clarifications"]>([
     { term: "经营改善", message: "该表达没有唯一财务定义。", resolvedAs: "默认按最新报告期归母净利润同比 > 20%" },
     { term: "估值合理", message: "估值需要指定指标和比较口径。", resolvedAs: "默认按 PE-TTM < 30 倍" },
@@ -231,6 +232,7 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
 
             <div className="exclusions"><span>状态排除</span>{([ ["ST", "排除 ST"], ["SUSPENDED", "排除停牌"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={strategy.exclusions.includes(key)} onChange={(event) => { setSaved(false); setStrategy({ ...strategy, exclusions: event.target.checked ? [...strategy.exclusions, key] : strategy.exclusions.filter((v) => v !== key) }); }} />{label}</label>)}</div>
             <p className="exclusion-help">缺失指标保持“无法判断”，不会按 0 处理。{dataMode === "live" && "停牌状态暂不可用，默认不启用停牌排除；ST 由代码表名称识别。总市值暂不可用。"}</p>
+            {dataMode === "live" && strategy.exclusions.includes("SUSPENDED") && <div className="stale-notice" role="status">已启用排除停牌，但数据源没有停牌状态。即使全部数值条件满足，也会归为无法判断；取消“排除停牌”后重新执行可按其他条件筛选。</div>}
             <div className="condition-actions">
               <button className="secondary-button" onClick={saveStrategy}><Bookmark size={17} />{saved ? "已保存" : "保存策略"}</button>
               <button className="primary-button run-button" onClick={screen} disabled={busy !== null || conflicts.some((item) => item.type === "error")}>
