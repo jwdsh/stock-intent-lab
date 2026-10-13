@@ -44,14 +44,16 @@ export interface MetricValue {
   source: string;
   status: DataStatus;
   note?: string;
+  rawField?: string;
+  endpoint?: string;
 }
 
 export interface StockRecord {
   symbol: string;
   name: string;
   industry: string;
-  isST: boolean;
-  isSuspended: boolean;
+  isST: boolean | null;
+  isSuspended: boolean | null;
   metrics: Record<MetricKey, MetricValue>;
 }
 
@@ -79,6 +81,7 @@ export interface ScreeningResult {
   included: StockEvaluation[];
   excluded: StockEvaluation[];
   unavailable: StockEvaluation[];
+  snapshot?: { id: string; fetchedAt: string; expiresAt: string; universe: string[]; mode: "demo" | "live" };
 }
 
 export interface Conflict {

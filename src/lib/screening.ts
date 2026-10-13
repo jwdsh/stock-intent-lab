@@ -33,6 +33,8 @@ export function screenStocks(strategy: Strategy, stocks: StockRecord[], now = ne
     const exclusionReasons: string[] = [];
     if (strategy.exclusions.includes("ST") && stock.isST) exclusionReasons.push("已按策略排除 ST 股票");
     if (strategy.exclusions.includes("SUSPENDED") && stock.isSuspended) exclusionReasons.push("已按策略排除停牌股票");
+    const unknownFlags = (strategy.exclusions.includes("ST") && stock.isST === null)
+      || (strategy.exclusions.includes("SUSPENDED") && stock.isSuspended === null);
 
     const conditionResults = enabled.map((condition) => evaluateCondition(stock, condition));
     const unavailable = conditionResults.some((item) => item.status === "unavailable");
@@ -40,16 +42,16 @@ export function screenStocks(strategy: Strategy, stocks: StockRecord[], now = ne
       ? conditionResults.length > 0 && conditionResults.every((item) => item.status === "passed")
       : conditionResults.some((item) => item.status === "passed");
 
-    if (unavailable && !matched && strategy.exclusions.includes("MISSING_DATA")) {
-      exclusionReasons.push("关键指标缺失，无法完成全部条件判断");
-    }
-    if (!matched && !unavailable) exclusionReasons.push(`未满足当前 ${strategy.logic} 条件组合`);
-
-    const status: StockEvaluation["status"] = exclusionReasons.some((reason) => reason.includes("缺失"))
-      ? "unavailable"
-      : exclusionReasons.length > 0 || !matched
-        ? "excluded"
-        : "included";
+    const definitivelyFailed = enabled.length === 0 || (strategy.logic === "AND"
+      ? conditionResults.some((item) => item.status === "failed")
+      : !matched && !unavailable);
+    // Known failures decide exclusion. Unknown data never passes, even if the legacy
+    // MISSING_DATA flag is absent. OR needs just one passed branch.
+    const status: StockEvaluation["status"] = exclusionReasons.length > 0 || definitivelyFailed
+      ? "excluded" : unknownFlags || !matched ? "unavailable" : "included";
+    if (definitivelyFailed) exclusionReasons.push(`未满足当前 ${strategy.logic} 条件组合`);
+    if (unknownFlags) exclusionReasons.push("排除条件所需的 ST 或停牌状态缺失，无法判断");
+    if (unavailable) exclusionReasons.push(matched ? "部分指标缺失；OR 已有满足分支" : "部分指标缺失，具体见逐条件依据");
     return { stock, status, evaluations: conditionResults, exclusionReasons };
   });
 
@@ -61,13 +63,13 @@ export function screenStocks(strategy: Strategy, stocks: StockRecord[], now = ne
   };
 }
 
-export function detectConflicts(conditions: Condition[]): Conflict[] {
+export function detectConflicts(conditions: Condition[], logic: Strategy["logic"] = "AND"): Conflict[] {
   const active = conditions.filter((condition) => condition.enabled);
   const conflicts: Conflict[] = [];
 
   for (const condition of active) {
     const metric = METRICS[condition.metric];
-    if (condition.value < metric.min || condition.value > metric.max) {
+    if (!Number.isFinite(condition.value) || condition.value < metric.min || condition.value > metric.max) {
       conflicts.push({
         type: "error", conditionIds: [condition.id],
         message: `${metric.label}的阈值应在 ${metric.min} 到 ${metric.max}${metric.unit}之间。`,
@@ -77,9 +79,9 @@ export function detectConflicts(conditions: Condition[]): Conflict[] {
 
   const grouped = Object.groupBy(active, (condition) => condition.metric);
   for (const [key, sameMetric] of Object.entries(grouped) as [MetricKey, Condition[] | undefined][]) {
-    if (!sameMetric || sameMetric.length < 2) continue;
-    const lower = sameMetric.filter((item) => item.operator.startsWith(">")).sort((a, b) => b.value - a.value)[0];
-    const upper = sameMetric.filter((item) => item.operator.startsWith("<")).sort((a, b) => a.value - b.value)[0];
+    if (logic === "OR" || !sameMetric || sameMetric.length < 2) continue;
+    const lower = sameMetric.filter((item) => item.operator.startsWith(">")).sort((a, b) => b.value - a.value || Number(b.operator === ">") - Number(a.operator === ">"))[0];
+    const upper = sameMetric.filter((item) => item.operator.startsWith("<")).sort((a, b) => a.value - b.value || Number(b.operator === "<") - Number(a.operator === "<"))[0];
     const impossibleAtEqualPoint = lower?.value === upper?.value && (lower.operator === ">" || upper.operator === "<");
     if (lower && upper && (lower.value > upper.value || impossibleAtEqualPoint)) {
       conflicts.push({
@@ -103,4 +105,20 @@ export function diffResults(previous: ScreeningResult | null, current: Screening
     added: current.included.filter((item) => !before.has(item.stock.symbol)),
     removed: previous.included.filter((item) => !after.has(item.stock.symbol)),
   };
+}
+
+export function strategyChanges(previous: Strategy, current: Strategy): string[] {
+  const describe = (v: Condition) => `${METRICS[v.metric].label} ${v.operator} ${v.value}${METRICS[v.metric].unit}${v.enabled ? "" : "（停用）"}`;
+  const changes: string[] = [];
+  if (previous.logic !== current.logic) changes.push(`组合逻辑：${previous.logic} → ${current.logic}`);
+  const before = new Map(previous.conditions.map((v) => [v.id, v]));
+  const after = new Map(current.conditions.map((v) => [v.id, v]));
+  for (const v of current.conditions) {
+    const old = before.get(v.id);
+    if (!old) changes.push(`添加：${describe(v)}`);
+    else if (describe(old) !== describe(v)) changes.push(`${describe(old)} → ${describe(v)}`);
+  }
+  for (const v of previous.conditions) if (!after.has(v.id)) changes.push(`删除：${describe(v)}`);
+  if ([...previous.exclusions].sort().join() !== [...current.exclusions].sort().join()) changes.push("状态排除选项已修改");
+  return changes;
 }

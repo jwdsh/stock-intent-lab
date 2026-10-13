@@ -14,6 +14,15 @@ function explicitNumber(query: string, pattern: RegExp): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+function explicitOperator(query: string, metricPattern: RegExp, fallback: Condition["operator"]): Condition["operator"] {
+  const clause = query.match(metricPattern)?.[0] ?? "";
+  if (/不超过|不高于|至多|<=|≤/.test(clause)) return "<=";
+  if (/不少于|不低于|至少|>=|≥/.test(clause)) return ">=";
+  if (/低于|小于|少于|</.test(clause)) return "<";
+  if (/超过|高于|大于|>/.test(clause)) return ">";
+  return fallback;
+}
+
 export function parseIntent(query: string): ParseResult {
   const normalized = query.trim();
   const compliance = forbiddenPatterns.some((pattern) => pattern.test(normalized));
@@ -25,16 +34,16 @@ export function parseIntent(query: string): ParseResult {
   const volatilityValue = explicitNumber(normalized, /(?:波动率|波动)[^\d]*(\d+(?:\.\d+)?)\s*%/);
 
   if (/经营改善|利润增长|净利润|盈利改善/.test(normalized)) {
-    conditions.push(makeCondition("net_profit_yoy", ">", profitValue ?? 20));
+    conditions.push(makeCondition("net_profit_yoy", explicitOperator(normalized, /(?:净利润|利润)[^，,；;。]*/, ">"), profitValue ?? 20));
     if (profitValue === undefined) clarifications.push({ term: "经营改善", message: "该表达没有唯一财务定义。", resolvedAs: "默认按最新报告期归母净利润同比 > 20%" });
   }
   if (/营收|收入增长/.test(normalized)) conditions.push(makeCondition("revenue_yoy", ">", 10));
   if (/估值合理|低估值|便宜|市盈率|\bPE\b/i.test(normalized)) {
-    conditions.push(makeCondition("pe_ttm", "<", peValue ?? 30));
+    conditions.push(makeCondition("pe_ttm", explicitOperator(normalized, /(?:PE|市盈率)[^，,；;。]*/i, "<"), peValue ?? 30));
     if (peValue === undefined) clarifications.push({ term: "估值合理", message: "估值需要指定指标和比较口径。", resolvedAs: "默认按 PE-TTM < 30 倍" });
   }
   if (/稳定|低波动|波动率/.test(normalized)) {
-    conditions.push(makeCondition("volatility_60d", "<", volatilityValue ?? 30));
+    conditions.push(makeCondition("volatility_60d", explicitOperator(normalized, /(?:波动率|波动)[^，,；;。]*/, "<"), volatilityValue ?? 30));
     if (volatilityValue === undefined) clarifications.push({ term: "走势稳定", message: "稳定可由波动率或最大回撤衡量。", resolvedAs: "默认按近 60 日年化波动率 < 30%" });
   }
   if (/大盘股|大市值/.test(normalized)) {

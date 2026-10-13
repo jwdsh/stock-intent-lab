@@ -14,11 +14,10 @@ export function calculateAnnualizedVolatility(closes: number[]): number | null {
 }
 
 export function calculate60DayMetrics(bars: PriceBar[]) {
-  const valid = bars
-    .filter((bar) => Number.isFinite(bar.close_price) && bar.close_price > 0)
-    .sort((a, b) => a.date_ms - b.date_ms)
-    .slice(-61);
-  if (valid.length < 61) return { return60d: null, volatility60d: null, asOf: valid.at(-1)?.date_ms ?? null };
+  const valid = [...bars].sort((a, b) => a.date_ms - b.date_ms).slice(-61);
+  const invalid = valid.some((v) => !Number.isFinite(v.date_ms) || !Number.isFinite(v.close_price) || v.close_price <= 0);
+  const duplicate = new Set(valid.map((v) => v.date_ms)).size !== valid.length;
+  if (valid.length < 61 || invalid || duplicate) return { return60d: null, volatility60d: null, asOf: valid.at(-1)?.date_ms ?? null };
   const closes = valid.map((bar) => bar.close_price);
   return {
     return60d: calculateReturn(closes),
