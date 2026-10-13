@@ -195,6 +195,15 @@ td > span:not(.metric-cell) { display: block; margin-top: 3px; color: var(--mute
 .compare-table p { color: var(--muted); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .compare-table details { margin-top: 8px; font-size: 10px; }
 .evidence-item dd { overflow-wrap: anywhere; }
+.strategy-name { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 16px; font-size: 12px; }
+.strategy-name input { min-width: 0; flex: 1; border: 1px solid var(--line); padding: 8px; }
+.saved-strategies-toggle { padding: 0 16px 14px; }
+.saved-strategies { padding: 14px 16px; border-top: 1px solid var(--line); background: var(--surface-soft); font-size: 12px; }
+.saved-strategies h3, .saved-strategy-item h4 { margin: 0 0 8px; }
+.saved-strategies p, .saved-strategies li { color: var(--muted); line-height: 1.7; overflow-wrap: anywhere; }
+.saved-strategies > input { width: 100%; border: 1px solid var(--line); padding: 8px; background: white; }
+.saved-strategy-item { margin-top: 12px; padding: 12px; border: 1px solid var(--line); background: white; }
+.saved-strategy-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1050px) {

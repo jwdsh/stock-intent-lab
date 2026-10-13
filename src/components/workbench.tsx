@@ -7,6 +7,7 @@ import {
   SlidersHorizontal, Sparkles, Trash2, X, XCircle,
 } from "lucide-react";
 import type { Condition, MetricKey, ParseResult, ScreeningResult, StockEvaluation, Strategy } from "@/lib/domain";
+import { strategySchema } from "@/lib/domain";
 import { METRIC_LIST, METRICS, formatMetricValue } from "@/lib/metrics";
 import { detectConflicts, diffResults, strategyChanges } from "@/lib/screening";
 import { defaultExclusions } from "@/lib/exclusions";
@@ -19,6 +20,12 @@ const EXAMPLES = [
 ];
 
 type ResultTab = "all" | "included" | "excluded" | "unavailable";
+
+const SAVED_STRATEGIES_KEY = "saved-strategies";
+
+function readSavedStrategies(): Strategy[] {
+  return strategySchema.array().parse(JSON.parse(localStorage.getItem(SAVED_STRATEGIES_KEY) ?? "[]"));
+}
 
 const FALLBACK_STRATEGY: Strategy = {
   id: "initial-strategy",
@@ -63,7 +70,9 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
   const [tab, setTab] = useState<ResultTab>("included");
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
   const [showCompare, setShowCompare] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [savedStrategies, setSavedStrategies] = useState<Strategy[]>([]);
+  const [showSavedStrategies, setShowSavedStrategies] = useState(false);
+  const [strategySearch, setStrategySearch] = useState("");
   const [busy, setBusy] = useState<"parse" | "screen" | null>(null);
   const [error, setError] = useState<string>();
   const [resultSearch, setResultSearch] = useState("");
@@ -71,6 +80,8 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const conflicts = useMemo(() => detectConflicts(strategy.conditions, strategy.logic), [strategy.conditions, strategy.logic]);
+  const saved = savedStrategies.some((item) => JSON.stringify(item) === JSON.stringify(strategy));
+  const visibleStrategies = savedStrategies.filter((item) => `${item.name} ${item.originalQuery}`.toLowerCase().includes(strategySearch.trim().toLowerCase()));
   const diff = useMemo(() => result ? diffResults(previousResult, result) : null, [previousResult, result]);
   const allEvaluations = result ? [...result.included, ...result.excluded, ...result.unavailable] : [];
   const visibleRows = (tab === "all" ? allEvaluations : result?.[tab] ?? []).filter((row) => `${row.stock.name} ${row.stock.symbol}`.toLowerCase().includes(resultSearch.trim().toLowerCase())).sort((a, b) => {
@@ -89,7 +100,7 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
 
   const parse = async () => {
     if (!query.trim()) { setError("请输入选股意图后再解析。"); return; }
-    setBusy("parse"); setError(undefined); setSaved(false);
+    setBusy("parse"); setError(undefined);
     try {
       const parsed = await requestJson<ParseResult>("/api/parse", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }),
@@ -108,7 +119,7 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
 
   const screen = async () => {
     if (conflicts.some((item) => item.type === "error")) { setError("请先修正条件冲突。"); return; }
-    setBusy("screen"); setError(undefined); setSaved(false);
+    setBusy("screen"); setError(undefined);
     try {
       const next = await requestJson<ScreeningResult>("/api/screen", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(strategy),
@@ -128,7 +139,6 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
       ...current,
       conditions: current.conditions.map((condition) => condition.id === id ? { ...condition, ...update } : condition),
     }));
-    setSaved(false);
   };
 
   const addCondition = () => {
@@ -144,11 +154,40 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
   };
 
   const saveStrategy = () => {
+    const validated = strategySchema.safeParse({ ...strategy, name: strategy.name.trim() });
+    if (!validated.success) { setError("策略未保存：请填写名称、至少一个条件和有效数值。"); return; }
     try {
-    const existing = JSON.parse(localStorage.getItem("saved-strategies") ?? "[]") as Strategy[];
-    localStorage.setItem("saved-strategies", JSON.stringify([strategy, ...existing.filter((item) => item.id !== strategy.id)].slice(0, 10)));
-    setSaved(true);
+      const existing = readSavedStrategies();
+      if (existing.length >= 10 && !existing.some((item) => item.id === strategy.id)) {
+        setError("最多保存 10 个策略，请先删除不再需要的策略。"); return;
+      }
+      const next = [validated.data, ...existing.filter((item) => item.id !== strategy.id)];
+      localStorage.setItem(SAVED_STRATEGIES_KEY, JSON.stringify(next));
+      setStrategy(validated.data); setSavedStrategies(next); setShowSavedStrategies(true); setStrategySearch(""); setError(undefined);
     } catch { setError("浏览器存储不可用或已有记录损坏，策略未保存。"); }
+  };
+
+  const openSavedStrategies = () => {
+    if (showSavedStrategies) { setShowSavedStrategies(false); return; }
+    try {
+      setSavedStrategies(readSavedStrategies()); setShowSavedStrategies(true); setError(undefined);
+    } catch { setError("无法读取已保存策略：浏览器存储不可用或记录损坏，原记录未修改。"); }
+  };
+
+  const loadStrategy = (item: Strategy) => {
+    setStrategy(structuredClone(item)); setQuery(item.originalQuery);
+    setClarifications([]); setComplianceMessage(undefined); setError(undefined);
+    setParseMode("local"); setProviderNote("已载入保存的条件；执行筛选后获取当前数据。重新解析意图会生成新策略。");
+    setResult(null); setPreviousResult(null); setSelected(null); setTab("included");
+    setCompareSymbols([]); setShowCompare(false); setResultSearch("");
+  };
+
+  const deleteStrategy = (id: string) => {
+    try {
+      const next = readSavedStrategies().filter((item) => item.id !== id);
+      localStorage.setItem(SAVED_STRATEGIES_KEY, JSON.stringify(next));
+      setSavedStrategies(next); setError(undefined);
+    } catch { setError("删除失败：浏览器存储不可用或记录损坏，原记录未修改。"); }
   };
 
   const toggleCompare = (symbol: string) => {
@@ -230,15 +269,30 @@ export function Workbench({ dataMode, universe = [] }: { dataMode: "demo" | "liv
 
             {conflicts.length > 0 && <div className="conflict-list">{conflicts.map((conflict) => <div key={conflict.message}><AlertCircle size={16} /><span>{conflict.message}</span></div>)}</div>}
 
-            <div className="exclusions"><span>状态排除</span>{([ ["ST", "排除 ST"], ["SUSPENDED", "排除停牌"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={strategy.exclusions.includes(key)} onChange={(event) => { setSaved(false); setStrategy({ ...strategy, exclusions: event.target.checked ? [...strategy.exclusions, key] : strategy.exclusions.filter((v) => v !== key) }); }} />{label}</label>)}</div>
+            <div className="exclusions"><span>状态排除</span>{([ ["ST", "排除 ST"], ["SUSPENDED", "排除停牌"] ] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={strategy.exclusions.includes(key)} onChange={(event) => { setStrategy({ ...strategy, exclusions: event.target.checked ? [...strategy.exclusions, key] : strategy.exclusions.filter((v) => v !== key) }); }} />{label}</label>)}</div>
             <p className="exclusion-help">缺失指标保持“无法判断”，不会按 0 处理。{dataMode === "live" && "停牌状态暂不可用，默认不启用停牌排除；ST 由代码表名称识别。总市值暂不可用。"}</p>
             {dataMode === "live" && strategy.exclusions.includes("SUSPENDED") && <div className="stale-notice" role="status">已启用排除停牌，但数据源没有停牌状态。即使全部数值条件满足，也会归为无法判断；取消“排除停牌”后重新执行可按其他条件筛选。</div>}
+            <div className="strategy-name"><label htmlFor="strategy-name">策略名称</label><input id="strategy-name" value={strategy.name} maxLength={50} onChange={(event) => setStrategy({ ...strategy, name: event.target.value })} /></div>
             <div className="condition-actions">
-              <button className="secondary-button" onClick={saveStrategy}><Bookmark size={17} />{saved ? "已保存" : "保存策略"}</button>
+              <button className="secondary-button" onClick={saveStrategy} disabled={busy !== null}><Bookmark size={17} />{saved ? "已保存" : "保存策略"}</button>
               <button className="primary-button run-button" onClick={screen} disabled={busy !== null || conflicts.some((item) => item.type === "error")}>
                 {busy === "screen" ? <Loader2 className="spin" size={18} /> : <Search size={18} />} 执行筛选 <ArrowRight size={17} />
               </button>
             </div>
+            <div className="saved-strategies-toggle"><button className="secondary-button" onClick={openSavedStrategies} aria-expanded={showSavedStrategies} aria-controls="saved-strategies-panel">{showSavedStrategies ? "收起已保存策略" : "查看已保存策略"}</button></div>
+            {showSavedStrategies && <section id="saved-strategies-panel" className="saved-strategies" aria-label="已保存策略">
+              <h3>已保存策略 · {savedStrategies.length}/10</h3>
+              <p>保存在当前浏览器和当前网站地址下。保存条件，不保存行情结果；载入后请重新筛选。再次保存更新同一条，重新解析意图生成新策略。</p>
+              <input aria-label="搜索已保存策略" placeholder="搜索名称或原始意图" value={strategySearch} onChange={(event) => setStrategySearch(event.target.value)} />
+              {visibleStrategies.length === 0 && <p>{savedStrategies.length === 0 ? "暂无已保存策略" : "没有匹配的策略"}</p>}
+              {visibleStrategies.map((item) => <article className="saved-strategy-item" key={item.id}>
+                <h4>{item.name}</h4><p>{item.originalQuery}</p>
+                <p>{item.logic} · {item.conditions.filter((v) => v.enabled).length} 个启用条件</p>
+                <ul>{item.conditions.map((condition) => <li key={condition.id}>{METRICS[condition.metric].label} {condition.operator} {condition.value} {METRICS[condition.metric].unit}{!condition.enabled && "（已停用）"}</li>)}</ul>
+                <p>状态排除：{item.exclusions.filter((v) => v !== "MISSING_DATA").map((v) => v === "ST" ? "ST" : "停牌").join("、") || "无"}</p>
+                <div className="saved-strategy-actions"><button className="secondary-button" disabled={busy !== null} onClick={() => loadStrategy(item)} aria-label={`载入策略 ${item.name}`}>载入条件</button><button className="secondary-button" disabled={busy !== null} onClick={() => deleteStrategy(item.id)} aria-label={`删除策略 ${item.name}`}><Trash2 size={14} />删除</button></div>
+              </article>)}
+            </section>}
           </section>
 
           <section className="results-section">
